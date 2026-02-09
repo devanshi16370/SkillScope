@@ -1,0 +1,220 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import sqlite3
+import post_resume
+import search_job
+import edit_profile
+import matplotlib.pyplot as plt
+import Setup_database
+import chatbot
+from notification import show_notifications
+from notification import add_notification
+
+# Function to apply for a job
+def apply_for_job(job_id, user_id, recruiter_id):
+    conn = sqlite3.connect('SkillScope.db')
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM applied_jobs WHERE job_id = ? AND user_id = ?", (job_id, user_id))
+    existing_application = cursor.fetchone()
+
+    if existing_application:
+        messagebox.showinfo("Already Applied", "You have already applied for this job.")
+    else:
+        cursor.execute(
+            "INSERT INTO applied_jobs (job_id, user_id, recruiter_id, status) VALUES (?, ?, ?, 'Pending')",
+            (job_id, user_id, recruiter_id))
+        conn.commit()
+        messagebox.showinfo("Success", "You have successfully applied for the job!")
+
+    conn.close()
+
+# Open other pages
+def open_search_job(userID, root):
+    root.destroy()
+    search_job.search_JOB(userID)
+
+def open_post_resume(userID, root):
+    root.destroy()
+    post_resume.postResume(userID)
+
+def open_edit_profile(userID, root):
+    root.destroy()
+    edit_profile.edit_Profile(userID)
+
+# View skills demand
+def view_demand_skill():
+    conn = sqlite3.connect('SkillScope.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM jobs")
+    data = cursor.fetchall()
+    skills_count = {}
+
+    for row in data:
+        skills = row[6].split(',')
+        for skill in skills:
+            skill = skill.strip()
+            skills_count[skill] = skills_count.get(skill, 0) + 1
+
+    plt.figure(figsize=(30, 30))
+    plt.pie(skills_count.values(), labels=skills_count.keys(), autopct='%0.2f%%',
+            startangle=0, colors=plt.cm.Paired.colors)
+    plt.title("Skills in Demand")
+    plt.axis('equal')
+    plt.show()
+
+# View jobs demand
+def view_demand_jobs():
+    conn = sqlite3.connect('SkillScope.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM jobs")
+    data = cursor.fetchall()
+    job_count = {}
+
+    for row in data:
+        skills = row[2].split(',')
+        for skill in skills:
+            skill = skill.strip()
+            job_count[skill] = job_count.get(skill, 0) + 1
+
+    plt.figure(figsize=(30, 30))
+    plt.pie(job_count.values(), labels=job_count.keys(), autopct='%0.2f%%',
+            startangle=0, colors=plt.cm.Paired.colors)
+    plt.title("Jobs in Demand")
+    plt.axis('equal')
+    plt.show()
+
+# Logout
+def logout(root):
+    confirm = messagebox.askyesno("Logout", "Are you sure you want to logout?")
+    if confirm:
+        root.destroy()
+        import main  # Redirect to login
+
+# Main User Dashboard
+def user_dashboard(user_id):
+    conn = sqlite3.connect('SkillScope.db')
+    cursor = conn.cursor()
+
+    # Fetch user skills
+    cursor.execute("SELECT skills FROM user_details WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    top_skills = [skill.strip() for skill in result[0].split(',')] if result else []
+
+    # Fetch matching jobs
+    query = '''SELECT jobs.job_id, jobs.job_position, jobs.skills_required, jobs.salary, jobs.location, recruiters_details.recruiter_id, recruiters_details.company_name
+               FROM jobs
+               JOIN recruiters_details ON jobs.recruiter_id = recruiters_details.recruiter_id'''
+
+    params = []
+    if top_skills:
+        conditions = ["jobs.skills_required LIKE ?" for _ in top_skills]
+        query += " WHERE " + " OR ".join(conditions)
+        params = [f"%{skill}%" for skill in top_skills]
+
+    cursor.execute(query, params)
+    jobs = cursor.fetchall()
+
+    root = tk.Tk()
+    root.title("User Dashboard")
+    root.geometry("1000x600")
+    root.configure(bg="#F8F9FA")
+
+    # Sidebar
+    left_frame = tk.Frame(root, width=230, bg="#2C3E50", height=600)
+    left_frame.pack(side=tk.LEFT, fill=tk.Y)
+
+    tk.Label(left_frame, text="User Dashboard", fg="white", bg="#2C3E50",
+             font=("Arial", 14, "bold"), pady=15).pack()
+
+    def create_sidebar_button(text, command):
+        btn = tk.Button(left_frame, text=text, font=("Arial", 12), bg="#34495E", fg="white",
+                        activebackground="#1A252F", bd=0, relief="ridge", padx=10, pady=7, command=command)
+        btn.pack(pady=10, fill=tk.X)
+        btn.bind("<Enter>", lambda e: btn.config(bg="#1A252F", fg="white"))
+        btn.bind("<Leave>", lambda e: btn.config(bg="#34495E", fg="white"))
+        return btn
+
+    create_sidebar_button("🔎 Search Job", lambda: open_search_job(user_id, root))
+    create_sidebar_button("📄 Post Resume", lambda: open_post_resume(user_id, root))
+    create_sidebar_button("📊 View Demanding Skills", lambda: view_demand_skill())
+    create_sidebar_button("📊 View Demanding Jobs", lambda: view_demand_jobs())
+    create_sidebar_button("📝 Edit Profile", lambda: open_edit_profile(user_id, root))
+    create_sidebar_button("🔔 Notifications", lambda: show_notifications(user_id, "user"))
+    create_sidebar_button("💬 Chat with Bot", lambda: chatbot.start_chatbot("user"))
+    create_sidebar_button("🚪 Logout", lambda: logout(root))
+
+    # Content
+    content_frame = tk.Frame(root, bg="white", padx=20, pady=20)
+    content_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    tk.Label(content_frame, text="🏆 Recommended Jobs", font=("Arial", 18, "bold"),
+             bg="white", fg="#2C3E50").pack(pady=10)
+
+    tree_frame = tk.Frame(content_frame, bg="white", padx=10, pady=10)
+    tree_frame.pack(fill=tk.BOTH, expand=True)
+
+    columns = ("Job ID", "Company name", "Job Title", "Skills Required", "Salary", "Location")
+    tree = ttk.Treeview(tree_frame, columns=columns, show='headings')
+
+    for col in columns:
+        tree.heading(col, text=col)
+        if col == "Job ID":
+            tree.column(col, width=0, stretch=False)  # Hide Job ID
+        else:
+            tree.column(col, width=150 if col != "Skills Required" else 250)
+
+    style = ttk.Style()
+    style.configure("Treeview", font=("Arial", 10), rowheight=30, background="#ECF0F1")
+    style.configure("Treeview.Heading", font=("Arial", 12, "bold"), background="#34495E", foreground="black")
+
+    for job in jobs:
+        job_id, job_position, skills_required, salary, location, recruiter_id, company_name = job
+        tree.insert("", tk.END, values=(job_id, company_name, job_position, skills_required, salary, location))
+
+    tree.pack(fill=tk.BOTH, expand=True)
+
+    button_frame = tk.Frame(content_frame, bg="white")
+    button_frame.pack(fill=tk.X, padx=10, pady=10)
+
+    def apply_selected_job(event=None):
+        selected_item = tree.selection()
+        if not selected_item:
+            messagebox.showwarning("No Selection", "Please select a job to apply.")
+            return
+
+        job_details = tree.item(selected_item[0], 'values')
+        job_id = int(job_details[0])
+
+        cursor.execute("SELECT recruiter_id FROM jobs WHERE job_id = ?", (job_id,))
+        recruiter_row = cursor.fetchone()
+
+        if not recruiter_row:
+            messagebox.showerror("Error", "Recruiter not found for this job.")
+            return
+
+        recruiter_id = recruiter_row[0]
+
+        apply_for_job(job_id, user_id, recruiter_id)
+
+        try:
+            add_notification(user_id, "You applied for a job. Status: Pending.")
+        except Exception as e:
+            print("Notification Error:", e)
+
+    apply_btn = tk.Button(button_frame, text="Apply for Selected Job", font=("Arial", 12),
+                          bg="#28A745", fg="white", padx=10, pady=5, command=apply_selected_job)
+    apply_btn.pack(pady=10)
+
+    tree.bind("<Double-1>", apply_selected_job)  # Allow double click to apply
+
+    # FIX: Close DB only when window closes
+    def on_closing():
+        conn.close()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    root.mainloop()
+
+# Uncomment below line if you want to test directly
+# user_dashboard(1)
